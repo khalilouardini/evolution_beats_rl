@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+uv.lock
+
+# Testing / lint caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.ruff_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Runs / experiments (per CLAUDE.md §5, §7)
+runs/
+wandb/
+checkpoints/
+
+# Model artifacts
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.gguf
+
+# HuggingFace cache
+.cache/
+hf_cache/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.local
+
+# Claude Code workspace (a worktree of the unrelated Desktop repo currently lives at .claude/)
+.claude/
