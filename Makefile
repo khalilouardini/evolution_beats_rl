@@ -1,22 +1,26 @@
-.PHONY: help install install-dev smoke smoke-grpo smoke-es test repro figs clean
+.PHONY: help install install-dev install-cloud smoke smoke-grpo smoke-es test repro figs clean
 
 help:
 	@echo "Targets:"
-	@echo "  install       - install runtime deps via uv"
-	@echo "  install-dev   - install runtime + dev deps via uv"
-	@echo "  smoke         - Phase 0 smoke (Qwen2.5-0.5B on 50 GSM8K prompts, pass@1 >= 0.30)"
-	@echo "  smoke-grpo    - Phase 1 fast loop (20 GRPO steps)"
-	@echo "  smoke-es      - Phase 2 fast loop (5 ES generations, N=10)"
-	@echo "  test          - run pytest"
-	@echo "  repro         - re-run all headline configs (TBD after Phase 3)"
-	@echo "  figs          - regenerate all figures from results/ (TBD after Phase 3)"
-	@echo "  clean         - remove caches and build artifacts"
+	@echo "  install        - install runtime deps (toy phase, no vllm)"
+	@echo "  install-dev    - install runtime + dev deps (toy phase, no vllm)"
+	@echo "  install-cloud  - install runtime + dev + cloud deps (adds vllm; CUDA Linux only)"
+	@echo "  smoke          - Phase 0 smoke (Qwen2.5-0.5B on 50 GSM8K prompts via MPS, pass@1 >= 0.30)"
+	@echo "  smoke-grpo     - Phase 1 fast loop (20 GRPO steps, toy config)"
+	@echo "  smoke-es       - Phase 2 fast loop (5 ES generations, N=10)"
+	@echo "  test           - run pytest"
+	@echo "  repro          - re-run all headline configs (TBD after Phase 4)"
+	@echo "  figs           - regenerate all figures from results/ (TBD after Phase 4)"
+	@echo "  clean          - remove caches and build artifacts"
 
 install:
 	uv pip install -e .
 
 install-dev:
 	uv pip install -e ".[dev]"
+
+install-cloud:
+	uv pip install -e ".[dev,cloud]"
 
 smoke:
 	bash scripts/smoke_test.sh

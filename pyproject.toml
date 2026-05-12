@@ -15,9 +15,9 @@ dependencies = [
     # RL + PEFT
     "trl>=0.12,<1",
     "peft>=0.13,<0.15",
-    # Generation — pin <0.7 to stay with the vllm_mode="colocate" API TRL 0.12
-    # was designed around.
-    "vllm>=0.6.3,<0.7",
+    # Generation: vLLM moved to `cloud` extras (CUDA-only; no usable MPS
+    # backend). Toy phase uses transformers.generate() directly with
+    # use_vllm=False in TRL.
     # Eval
     "lm-eval>=0.4.5,<0.5",
     # Logging + config
@@ -40,6 +40,14 @@ dev = [
     "ruff>=0.6",
     "ipython>=8.27",
     "matplotlib>=3.9",
+]
+
+# Cloud-only deps for Phase 4+ (Modal / RunPod / Lambda CUDA boxes). Not
+# installed on M1 Pro toy phase: vllm has no usable MPS backend, and pulling
+# it in transitively forces CUDA-bound wheels that fail to build on darwin.
+# On the GPU box, install with: uv pip install -e ".[dev,cloud]"
+cloud = [
+    "vllm>=0.6.3,<0.7",
 ]
 
 [build-system]
