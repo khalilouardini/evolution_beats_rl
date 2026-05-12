@@ -6,17 +6,20 @@ readme = "README.md"
 requires-python = ">=3.10,<3.13"
 
 dependencies = [
-    # Core ML
+    # Core ML — upper bounds keep us in the API surface CLAUDE.md was written
+    # against (transformers 4.x, TRL 0.x GRPOTrainer). Relax once we verify the
+    # newer majors don't break Phase 1 code.
     "torch>=2.4,<2.6",
-    "transformers>=4.45",
-    "datasets>=3.0",
+    "transformers>=4.45,<5",
+    "datasets>=3.0,<4",
     # RL + PEFT
-    "trl>=0.12",
-    "peft>=0.13",
-    # Generation
-    "vllm>=0.6.3",
+    "trl>=0.12,<1",
+    "peft>=0.13,<0.15",
+    # Generation — pin <0.7 to stay with the vllm_mode="colocate" API TRL 0.12
+    # was designed around.
+    "vllm>=0.6.3,<0.7",
     # Eval
-    "lm-eval>=0.4.5",
+    "lm-eval>=0.4.5,<0.5",
     # Logging + config
     "wandb>=0.18",
     "omegaconf>=2.3",
@@ -25,9 +28,9 @@ dependencies = [
     "scipy>=1.13",
     "rich>=13.7",
     "tqdm>=4.66",
-    # Math eval helpers (MATH-500 verifier needs sympy + latex2sympy2)
+    # Math eval helpers (GSM8K needs sympy only; MATH-500 latex normalization
+    # is handled by lm-eval-harness's minerva_math pipeline per CLAUDE.md §11)
     "sympy>=1.13",
-    "latex2sympy2>=1.9",
 ]
 
 [project.optional-dependencies]
