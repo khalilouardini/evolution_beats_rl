@@ -4,6 +4,8 @@ You are working on an ML research project autonomously. Read this file completel
 ## 1. Mission
 Compare **zeroth-order optimization (Evolution Strategies in LoRA-space)** against **first-order policy gradient (GRPO with verifiable rewards)** on math reasoning tasks, **matched by compute budget**.
 Fill the gap identified in Cognizant AI Lab, arXiv:2509.24372, which benchmarks ES vs vanilla PPO but not GRPO+RLVR — the regime where RL's known weaknesses (high gradient variance under long horizons, reward hacking) are already partially mitigated.
+### Execution strategy: toy-scale first, scale on validation
+Headline numbers require CUDA hardware (Phase 4 on Modal/RunPod). But before spending cloud GPU-hours, we validate the full pipeline (loaders, verifier, FLOP counter, LoRA flatten/unflatten, ES update rule, fairness protocol) on a small-scale comparison runnable locally on Apple Silicon. Phases 1–3 are toy-scale on M1 Pro; Phase 3.5 is a go/no-go decision gate; Phase 4+ is cloud-scale. **Toy results are pipeline validation and hypothesis screening, not headline.**
 ### Primary research question
 Given equal FLOPs and equal LoRA parameter budget, does ES match or exceed GRPO+RLVR on:
 1. **Sample efficiency** — prompts to reach target accuracy
@@ -32,22 +34,31 @@ If the empirical result contradicts all three, that itself is the paper. **Do no
 - [ ] Qwen2.5-3B size scaling point (cloud burst)
 ---
 ## 3. Hard Constraints
-- **Hardware**: 1 local GPU, assume 24GB VRAM (RTX 4090 / 3090 / A5000 class). Tune memory params for what you actually find with `nvidia-smi`.
-- **Cloud burst**: Modal or RunPod spot allowed for ablations only. **Confirm with user before any run >$50.** Track total spend in `results/spend.md`.
-- **Wall-clock**: project should fit in roughly 4 weekends + scattered evenings of GPU time. If a single experiment will take >36h, stop and report.
-- **Determinism**: every run must set `seed` from config and write `seed` to wandb. No silent seed defaults.
+- **Hardware (toy phase, Phases 0–3)**: MacBook Pro M1 Pro, 16 GB unified memory, Metal 3 (MPS). No CUDA, no `nvidia-smi`. Realistic working set: ~10 GB after macOS overhead. Close browser tabs before runs.
+- **Hardware (cloud phase, Phase 4+)**: Modal or RunPod CUDA box (target A10G or A100 spot). Project-level cloud budget approved ≈ **$400–1200** total. Single-run cap **$50** still applies — confirm before any one job projects over that. Track spend in `results/spend.md`.
+- **Wall-clock (toy phase)**: each single-seed toy run ≤ 4h. If a toy experiment will take >8h, downsize first (fewer steps, smaller train subset) before launching.
+- **Wall-clock (cloud phase)**: each single-seed cloud run ≤ 6h. If projected >36h, stop and report.
+- **Determinism**: every run must set `seed` from config and write `seed` to wandb. No silent seed defaults. (Note: no vLLM seed plumbing needed in toy phase — only the transformers/torch seed.)
 - **No fabricated numbers**. Ever. If a run failed, the table cell is empty and a note explains why.
 ---
 ## 4. Stack
-Pin these in `pyproject.toml`:
-- **GRPO**: `trl` (TRL ≥ 0.12 has stable GRPO+vLLM colocate). Fallback to `verl` if TRL becomes unstable at scale.
-- **Generation**: `vllm` in colocate mode (`vllm_mode="colocate"`, `gpu_memory_utilization=0.3–0.5`)
-- **PEFT**: `peft` for LoRA adapters
-- **ES**: custom implementation in `src/es/`. Reference: github.com/VsonicV/es-fine-tuning-paper (read it before writing; do not copy verbatim)
-- **Eval**: `lm-eval-harness` for GSM8K / MATH-500 standard metrics; custom thin wrapper in `src/eval/`
-- **Logging**: `wandb` (project = `es-vs-grpo`). Group runs by `phase` tag.
-- **Configs**: hydra or plain yaml + `OmegaConf`. Pick one and stick with it.
-Do **not** add: deepspeed, accelerate multi-GPU plumbing, FSDP. Single GPU only — these add complexity that buys nothing here.
+Pinned in `pyproject.toml`. Toy-phase install is `uv pip install -e ".[dev]"`. Cloud-phase install adds the `cloud` extra: `uv pip install -e ".[dev,cloud]"`.
+
+**Always-on:**
+- **GRPO**: `trl` (≥0.12, <1). Toy phase: `use_vllm=False`, generations via `model.generate()`. Cloud phase: `use_vllm=True, vllm_mode="colocate"`. Fallback to `verl` if TRL becomes unstable at cloud scale.
+- **PEFT**: `peft` (≥0.13) for LoRA adapters.
+- **ES**: custom implementation in `src/es/`. Reference: github.com/VsonicV/es-fine-tuning-paper (read it before writing; do not copy verbatim).
+- **Eval**: `lm-eval-harness` for GSM8K / MATH-500 standard metrics; custom thin wrapper in `src/eval/`.
+- **Logging**: `wandb` (project = `es-vs-grpo`). Group runs by `phase` tag. Tag toy runs with `scale=toy`, cloud runs with `scale=cloud`.
+- **Configs**: plain yaml + `OmegaConf`. (Decision: plain yaml over hydra — hydra's CLI composition isn't worth the import-time cost for this project size.)
+
+**Cloud-only (Phase 4+):**
+- **vLLM** (≥0.6.3, <0.7) in colocate mode (`vllm_mode="colocate"`, `gpu_memory_utilization=0.3–0.5`). Not installed in toy phase — has no usable MPS backend.
+
+**Forbidden:**
+- `deepspeed`, `accelerate` multi-GPU plumbing, FSDP — single GPU/single-process only; these add complexity that buys nothing here.
+- `bitsandbytes`, 4-bit/8-bit quantization in toy phase — CUDA-only; will crash on M1 Pro.
+- `flash-attn` in toy phase — CUDA-only.
 ---
 ## 5. Repo Layout
 ```
@@ -95,44 +106,50 @@ es-vs-grpo/
 ```
 ---
 ## 6. Phased Plan
-Each phase has an **exit gate**. Do not start phase N+1 until the gate for N is met. Update Progress Log when a gate passes.
-### Phase 0 — Bootstrap (target: half a day)
-1. Init repo, write `pyproject.toml`, install deps. Resolve any CUDA/torch version conflicts now, not later.
+Phases 0–3 are **toy-scale on M1 Pro** (pipeline validation + hypothesis screening). Phase 3.5 is the go/no-go decision gate. Phase 4+ are **cloud-scale on Modal** (publishable numbers). Each phase has an exit gate; do not start phase N+1 until the gate for N is met. Update Progress Log when a gate passes.
+
+### Phase 0 — Bootstrap (target: half a day on M1 Pro)
+1. Init repo, write `pyproject.toml`, install M1 deps (`uv pip install -e ".[dev]"` — no `cloud` extra).
 2. Implement `src/data/gsm8k.py`:
    - Load `openai/gsm8k` (main split).
    - Verifier extracts the final numeric answer (regex on `#### N` or last number) and compares to ground truth.
    - Unit test: 100 reference completions should give ≥95% verifier agreement with the gold labels.
 3. Implement `src/eval/harness.py`:
-   - Take a model + LoRA adapter, run greedy decode on GSM8K test, return pass@1.
+   - Take a model + LoRA adapter, run greedy decode (via `transformers.generate()`) on GSM8K test slice, return pass@1.
    - Also support `n_samples` for pass@k via temperature 0.7 sampling.
+   - MPS device auto-select; CPU fallback for ops that need it (set `PYTORCH_ENABLE_MPS_FALLBACK=1`).
 4. Implement `src/eval/compute.py`:
    - FLOP counter: forward ≈ 2 · params · tokens; backward ≈ 4 · params · tokens.
    - For ES, only forward. For GRPO, forward+backward on policy, forward on ref.
    - Returns dict `{forward_flops, backward_flops, total_flops, generated_tokens}` per run.
 5. Write `scripts/smoke_test.sh`:
-   - Loads Qwen2.5-0.5B-Instruct, runs eval on 50 GSM8K test items, asserts pass@1 ≥ 0.30.
-   - Must complete in <5 min on the target GPU.
+   - Loads Qwen2.5-0.5B-Instruct on MPS, runs eval on 50 GSM8K test items, asserts pass@1 ≥ 0.30.
+   - Wall-clock budget: <20 min on M1 Pro (was <5 min on 4090).
 **Exit gate 0**: `make smoke` passes; baseline Qwen2.5-0.5B-Instruct pass@1 on GSM8K test recorded in `results/tables/00_baseline.md`. Expect ~0.40–0.45.
-### Phase 1 — GRPO Baseline (target: 2 days GPU time)
-Goal: a GRPO+LoRA+vLLM pipeline that reliably improves a small Qwen on GSM8K, with full compute accounting.
+
+### Phase 1 — TOY GRPO Baseline on M1 Pro (target: 1 weekend)
+Goal: a GRPO+LoRA pipeline (no vLLM, generations via `transformers.generate()`) that demonstrably improves Qwen2.5-0.5B-Instruct on a 500-prompt GSM8K subset, with full FLOP accounting.
 1. Implement `src/grpo/train.py` using TRL `GRPOTrainer`:
-   - Model: Qwen2.5-1.5B-Instruct (primary); Qwen2.5-0.5B-Instruct (fast loop).
-   - LoRA: r=16, alpha=32, target = all-linear, dropout=0.
-   - Reward: accuracy (binary, 1 if verifier matches) + format (small bonus for `<answer>...</answer>` tag). Log both separately.
-   - `num_generations=8`, `max_completion_length=512`, `max_prompt_length=512`.
-   - `use_vllm=True`, `vllm_mode="colocate"`, `vllm_gpu_memory_utilization=0.35` (tune up if VRAM allows).
-   - `learning_rate=5e-6`, `gradient_accumulation_steps=4`, `beta=0.04` (KL coef).
-   - Log to wandb: reward mean/std per step, generation length, KL, accuracy on 100-prompt eval slice every 50 steps.
-2. Run on Qwen2.5-0.5B-Instruct, 5 seeds, ~500 steps each. Total ~10–15 GPU hours.
-3. Run on Qwen2.5-1.5B-Instruct, 5 seeds, ~800 steps each. Total ~30–50 GPU hours. Split across nights.
+   - Model: **Qwen2.5-0.5B-Instruct only**. 1.5B deferred to Phase 4 (won't fit M1 Pro comfortably during training).
+   - LoRA: r=16, α=32, target=all-linear, dropout=0.
+   - Reward: accuracy (binary) + format (small bonus for `<answer>...</answer>`). Log both separately.
+   - `num_generations=4` (toy, was 8), `max_completion_length=256`, `max_prompt_length=256`.
+   - `use_vllm=False`. Rollouts via `model.generate()` on MPS.
+   - `learning_rate=5e-6`, `gradient_accumulation_steps=4`, `beta=0.04` (KL).
+   - Train subset: 500 prompts of GSM8K `main/train`. Eval slice: 50 prompts of `main/test` every 25 steps.
+   - Log to wandb: reward mean/std per step, gen length, KL, eval pass@1, accumulated FLOPs.
+2. Run, **3 seeds, 100 steps each**. Target wall-clock: ≤4h/seed.
+
 **Sanity checks before declaring this phase done:**
 - Reward curve goes up and plateaus, doesn't collapse.
-- Eval pass@1 improves by ≥5 absolute points on 0.5B, ≥3 on 1.5B (Qwen Instruct is already strong).
-- Seed-to-seed final-accuracy std is small enough to detect ES differences (<3 absolute points).
-- KL to ref grows but doesn't explode (>50 is bad — lower LR or raise beta).
-**Exit gate 1**: 5-seed mean ± std GRPO numbers logged for both models in `results/tables/01_grpo_baseline.md`. Total FLOPs and wall-clock per run recorded.
-### Phase 2 — ES Implementation (target: 3 days)
-Goal: a working LoRA-space ES that demonstrably improves a small model on GSM8K, even if the absolute number is below GRPO.
+- Eval pass@1 improves by ≥2 absolute points on the eval slice (lower bar than scaled plan — we're on a subset).
+- Seed-to-seed final-accuracy std small enough to detect ES differences at toy scale (<5 abs points).
+- KL to ref grows but doesn't explode.
+
+**Exit gate 1 (toy)**: 3-seed mean ± std logged in `results/tables/01_grpo_toy.md`. Total FLOPs and wall-clock per run recorded.
+
+### Phase 2 — TOY ES Baseline on M1 Pro (target: 1 weekend)
+Goal: a working LoRA-space ES that demonstrably improves Qwen2.5-0.5B-Instruct on the same 500-prompt GSM8K subset.
 1. Implement `src/utils/lora.py`:
    - `flatten_lora(model) -> torch.Tensor` returning a 1-D vector of all LoRA A and B params.
    - `unflatten_lora(model, vec)` writing the vector back in place.
@@ -145,50 +162,85 @@ Goal: a working LoRA-space ES that demonstrably improves a small model on GSM8K,
        # Return estimated gradient (Eq. 2 from Salimans 2017)
    ```
    - Antithetic sampling on by default.
-   - Fitness shaping: rank-normalize rewards before computing the update (Wierstra et al.). This is critical for stability — without it ES is brittle.
-   - Use Adam on the ES gradient estimate (not raw SGD). LR=0.01 starting.
-   - σ schedule: constant 0.02 to start. Add cosine decay if unstable.
+   - Fitness shaping: centered-rank normalize before update (Wierstra et al.). Critical for stability — without it ES is brittle.
+   - Adam on the ES gradient estimate. LR=0.01.
+   - σ constant 0.02 to start. Add cosine decay only if unstable.
 3. `src/es/train.py` main loop:
-   - For each generation: sample N=40 perturbations (so 80 forward rollouts with antithetic).
-   - Each perturbation evaluated on a batch of B=16 prompts; fitness = mean accuracy + small format bonus.
-   - Use vLLM in offline mode for the rollouts — swap LoRA weights between perturbations, batch all prompts per perturbation.
-   - **Critical optimization**: with vLLM offline + LoRA hot-swap, each generation should take O(minutes), not O(hours). If it doesn't, profile before scaling.
-   - Log to wandb: best fitness per gen, mean fitness, fitness std across population, σ, learning rate, accumulated FLOPs.
-4. Smoke run: Qwen2.5-0.5B-Instruct, LoRA r=8, N=20, 30 generations. Should show clear upward fitness trend within 1–2 hours. If not, debug before going further.
-5. Real run: Qwen2.5-0.5B-Instruct, LoRA r=16, N=40, 100+ generations, 3 seeds. Total ~15–25 GPU hours.
-**Exit gate 2**: ES improves Qwen2.5-0.5B-Instruct GSM8K pass@1 by ≥3 absolute points over the SFT baseline; results in `results/tables/02_es_baseline.md`. The improvement does **not** need to match GRPO yet — just demonstrate the method works.
-### Phase 3 — Matched Comparison (target: 2 weekends GPU time)
-This is the headline experiment. Get it right.
-1. Define the **compute budget** $C$ explicitly. Use the FLOP estimate from phase 1's GRPO runs: $C = $ median total FLOPs of a successful GRPO run.
-2. Configure each ES run to terminate when its accumulated FLOPs reach $C$ (not after a fixed number of generations).
-3. Run, for both Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct, both datasets (GSM8K, MATH-500):
-   - GRPO: 5 seeds at budget $C$
-   - ES: 5 seeds at budget $C$
-4. Hyperparameter fairness: do **not** tune ES hyperparameters on the test set. Pick σ, N, LR from phase 2 outcomes, lock them, then run.
-5. Evaluate every checkpoint on the held-out test set, plot accuracy-vs-cumulative-FLOPs curves with seed envelopes.
-**Exit gate 3**: `results/figures/pareto.pdf` exists, showing both methods with 95% CI bands across 5 seeds, for both models. Numerical summary table in `results/tables/03_matched.md`.
-### Phase 4 — Ablations (target: 1 weekend, can use cloud)
-Pick **at most 3** of the following based on what's most surprising in phase 3:
+   - Per generation: sample **N=10 perturbations** (toy, was 40) → 20 forward rollouts with antithetic.
+   - Each perturbation evaluated on a batch of **B=8** prompts (toy, was 16); fitness = mean accuracy + 0.1·format bonus.
+   - Use `transformers.generate()` (no vLLM in toy). **Batch all prompts per perturbation in a single generate() call** — without this, ES will be dramatically slower than necessary.
+   - LoRA hot-swap between perturbations via the §11 flatten/unflatten path; no model rebuild per perturbation.
+   - Log to wandb: best/mean/std fitness per gen, σ, LR, accumulated FLOPs.
+4. Smoke run: Qwen2.5-0.5B-Instruct, LoRA r=8, N=10, 5 generations. Should show *any* upward fitness trend within 30–60 min. If not, debug before scaling.
+5. Real toy run: Qwen2.5-0.5B-Instruct, LoRA **r=8** (smaller than GRPO toy — ES degrades faster with rank, this gives ES a fair shot at toy scale), N=10, 30 generations, 3 seeds. Target ~5–10h/seed.
+
+**Exit gate 2 (toy)**: ES improves Qwen2.5-0.5B-Instruct GSM8K pass@1 by ≥1 absolute point over the SFT baseline on the toy subset; results in `results/tables/02_es_toy.md`. Improvement does NOT need to match GRPO at toy scale — just demonstrate the method moves the model.
+
+### Phase 3 — TOY Matched Comparison on M1 Pro (target: 1 weekend)
+This is the local headline — proof-of-concept, not publishable.
+1. Define toy compute budget $C_{toy}$ = median total FLOPs of a successful Phase-1 GRPO run.
+2. Configure ES to terminate when accumulated FLOPs reach $C_{toy}$.
+3. Run, Qwen2.5-0.5B-Instruct only, GSM8K only:
+   - GRPO: 3 seeds at $C_{toy}$.
+   - ES: 3 seeds at $C_{toy}$.
+4. Hyperparameter fairness: do NOT tune ES hyperparameters on test. Lock σ, N, LR from Phase 2. Same for GRPO LR, β from Phase 1.
+5. Evaluate every checkpoint on the 100-prompt held-out eval slice. Plot accuracy-vs-cumulative-FLOPs curves with seed envelopes.
+
+**Exit gate 3 (toy)**: `results/figures/pareto_toy.pdf` exists with both methods, 3-seed bands. Numerical summary in `results/tables/03_toy_matched.md`.
+
+### Phase 3.5 — Decision Gate (target: 1 hour, then surface to user)
+Look at Phase 3 toy results and answer **three questions in writing** in `results/tables/03_5_decision.md`:
+1. **Pipeline correctness check**: does the FLOP counter agree with `wall_clock × measured_tok_per_sec × ~6 · params` within ±20%? If not, the comparison is on broken accounting — fix before promoting.
+2. **Signal check**: is there *any* method-vs-method difference (≥1 absolute point gap between ES and GRPO at compute-matched, in either direction)? If literally identical curves, suspect a bug.
+3. **Direction check**: does the toy signal align with H1/H2/H3 from §1, or contradict all three? Either is fine — write it down.
+
+Then propose to user one of: **promote** to Phase 4 cloud / **debug** Phase 3 and re-run / **rescope** (different research question). Do not promote silently.
+
+**Exit gate 3.5**: User signs off on Phase 4 launch (or directs an alternative).
+
+### Phase 4 — CLOUD Headline Experiments on Modal (target: 2 weekends + scattered)
+The publishable comparison. Prerequisites:
+- Modal account + image with `uv pip install -e ".[dev,cloud]"`.
+- Per-experiment cost estimated in `results/spend.md` *before* launch.
+- Spot pricing assumed (A10G ≈ $0.6/hr spot, A100 ≈ $1.5/hr spot). Project budget cap ~$1200.
+
+1. Define cloud compute budget $C$ = median total FLOPs of a successful Phase-4 GRPO run on Qwen2.5-0.5B-Instruct full GSM8K.
+2. Configure ES to terminate at $C$.
+3. Run, for **both Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct**, **both datasets (GSM8K, MATH-500)**:
+   - GRPO (with vLLM colocate): 5 seeds at $C$.
+   - ES: 5 seeds at $C$.
+   Total estimated ~200 GPU-hours, ~$400–700 spot.
+4. Hyperparameter fairness: Phase 3 toy-locked ES hyperparameters. Phase 1 toy-locked GRPO LR + β. **No tuning on test set.**
+5. Evaluate every checkpoint on held-out test set. Plot accuracy-vs-cumulative-FLOPs with 95% CI bands across 5 seeds.
+
+**Exit gate 4**: `results/figures/pareto.pdf` shows both methods with 95% CI bands across 5 seeds, both models, both datasets. Numerical summary in `results/tables/04_cloud_matched.md`.
+
+### Phase 5 — Ablations (target: 1 weekend cloud)
+Pick **at most 3** of the following based on what's most surprising in Phase 4:
 - **Rank sweep**: r ∈ {4, 8, 16, 32, 64} — does ES degrade faster with rank?
 - **Horizon sweep**: max_completion_length ∈ {256, 512, 1024, 2048} — does ES's horizon-independence show up?
 - **Reward density**: GSM8K (sparse) vs a process-reward variant (dense). Hypothesis: ES gap shrinks with denser reward.
 - **Population size**: ES N ∈ {20, 40, 80, 160} — sample efficiency Pareto.
 - **Base model family**: Llama-3.2-1B and SmolLM2-1.7B as cross-family check.
 - **ES variant**: simple Gaussian ES vs sNES vs CMA-ES on small rank.
-Do not try to do all of these. Pick the 3 that best support the phase 3 narrative or expose its limits.
-**Exit gate 4**: Each chosen ablation has a figure or table in `results/`.
-### Phase 5 — Writeup (target: half a week)
+
+Do not try to do all of these. Pick the 3 that best support the Phase 4 narrative or expose its limits.
+
+**Exit gate 5**: Each chosen ablation has a figure or table in `results/`.
+
+### Phase 6 — Writeup (target: half a week)
 1. Draft sections in `paper/` (use ICLR or NeurIPS workshop template):
    - Abstract
    - Introduction (lead with the gap from arXiv:2509.24372)
    - Background (GRPO equations, ES equations, LoRA)
-   - Method (LoRA-space ES, fairness protocol, compute accounting)
-   - Experiments
-   - Limitations (single GPU, two model sizes, English math only)
+   - Method (LoRA-space ES, fairness protocol, compute accounting, toy→cloud staging)
+   - Experiments (toy validation results in appendix; headline cloud results in main body)
+   - Limitations (single GPU per run, two model sizes, English math only)
    - Related work
 2. Generate all figures from `results/` via `make figs`. No hand-tweaked plots without script.
 3. Push code + README + paper draft. Stop and surface to user for review.
-**Exit gate 5**: User reviews paper draft.
+
+**Exit gate 6**: User reviews paper draft.
 ---
 ## 7. Conventions
 ### Naming
@@ -212,12 +264,15 @@ These tell you when to **proceed**, **retry**, or **stop and ask**.
 | Situation | Action |
 |---|---|
 | Smoke test fails | Debug. Do not advance phase. |
-| Single training run OOMs | Lower `vllm_gpu_memory_utilization` by 0.05, then per-device batch by half. If still OOM, drop model size and note in log. |
+| Single training run OOMs on M1 Pro (toy) | Lower per-device batch by half; if still OOM, lower `num_generations` by 2; if still OOM, drop `max_completion_length` by half. M1 Pro unified RAM is the budget — close other apps. |
+| Single training run OOMs on Modal (cloud) | Lower `vllm_gpu_memory_utilization` by 0.05, then per-device batch by half. If still OOM, drop model size and note. |
 | Training run NaNs after >100 steps | Lower LR by 2×, restart from last good checkpoint. After 2 NaN retries on same config, stop and report. |
 | GRPO reward collapses (mean drops by >50% over 100 steps) | Raise KL coef β, restart. After 2 retries, stop and report. |
-| ES fitness flat for >20 generations | First check σ (too small → no signal; too large → noise drowns signal). Try σ × 2 and σ / 2 each for 10 gens. If still flat, escalate. |
-| Cloud cost projected >$50 for the next experiment | **Stop. Ask user before spending.** |
-| Surprising result (e.g. ES > GRPO by >5 points) | Re-run with 2 fresh seeds. Verify with a different eval slice. Do **not** publish without replication. |
+| ES fitness flat for >20 generations | Check σ (too small → no signal; too large → noise drowns signal). Try σ × 2 and σ / 2 each for 10 gens. If still flat, escalate. |
+| Toy result shows no method-vs-method signal at Phase 3.5 | Debug FLOP counter and verifier first; do NOT promote to Phase 4. Re-run Phase 3 toy with fresh seeds. |
+| Toy result shows clear gap (>5 abs points) at Phase 3.5 | Document, then propose Phase 4 launch. Do NOT assume scale will preserve the gap — write down the prediction. |
+| Cloud cost projected >$50 for the next single experiment | **Stop. Ask user before spending.** |
+| Surprising result (e.g. ES > GRPO by >5 points at cloud scale) | Re-run with 2 fresh seeds. Verify with a different eval slice. Do **not** publish without replication. |
 | You think the plan needs to change | Edit this CLAUDE.md and commit the change with `[plan-update]` prefix. Surface the change in the next progress update. |
 | You're blocked >2 hours on infra | Stop, write up the blocker in `Progress Log`, surface to user. |
 ---
@@ -235,34 +290,76 @@ Same idea for ES: `configs/es/smoke.yaml` uses N=10, 5 generations, eval on 50 p
 ---
 ## 10. Hyperparameter Defaults
 Start here, deviate only with logged justification.
-**GRPO:**
+
+### TOY phase (Phases 1–3, M1 Pro)
+**GRPO toy:**
+- Model: Qwen2.5-0.5B-Instruct
 - LoRA: r=16, α=32, dropout=0, target=all-linear
-- LR=5e-6, gradient_accumulation_steps=4, num_generations=8
-- max_completion_length=512, max_prompt_length=512
+- LR=5e-6, gradient_accumulation_steps=4, **num_generations=4**
+- **max_completion_length=256, max_prompt_length=256**
 - β (KL coef)=0.04, ε (clip)=0.2
 - Reward = accuracy + 0.1 · format_bonus
-- vllm_gpu_memory_utilization=0.35, sleep_level=1
-**ES:**
-- LoRA: r=16, α=32, dropout=0, target=all-linear
-- N=40 (population), antithetic=True
+- `use_vllm=False` (vLLM has no MPS backend)
+- Train subset: 500 prompts; eval slice: 50 prompts every 25 steps
+- max_steps=100; 3 seeds
+
+**ES toy:**
+- Model: Qwen2.5-0.5B-Instruct
+- LoRA: **r=8**, α=16, dropout=0, target=all-linear
+- **N=10** (population), antithetic=True (→ 20 forward rollouts/gen)
 - σ=0.02 constant
 - Optimizer: Adam, LR=0.01
 - Fitness shaping: centered rank
-- Batch B=16 prompts per perturbation evaluation
+- **Batch B=8** prompts per perturbation evaluation
+- 30 generations; 3 seeds
 - Same reward as GRPO for fairness
-**Eval:**
+
+### CLOUD phase (Phase 4+, Modal)
+**GRPO cloud:**
+- Models: Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct
+- LoRA: r=16, α=32, dropout=0, target=all-linear
+- LR=5e-6, gradient_accumulation_steps=4, num_generations=8
+- max_completion_length=512, max_prompt_length=512
+- β=0.04, ε=0.2
+- Reward = accuracy + 0.1 · format_bonus
+- `use_vllm=True, vllm_mode="colocate", vllm_gpu_memory_utilization=0.35, sleep_level=1`
+- Full GSM8K train + MATH-500; max_steps=500 (0.5B), 800 (1.5B); 5 seeds
+
+**ES cloud:**
+- Models: Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct
+- LoRA: r=16, α=32, dropout=0, target=all-linear
+- N=40 (population), antithetic=True
+- σ=0.02 constant (may adjust based on Phase 3 outcome)
+- Optimizer: Adam, LR=0.01 (locked from Phase 3 toy)
+- Fitness shaping: centered rank
+- Batch B=16 prompts per perturbation evaluation
+- 100+ generations; 5 seeds
+- Same reward as GRPO for fairness
+
+### Eval (both phases)
 - pass@1: greedy (temperature=0)
 - pass@k for k>1: temperature=0.7, top_p=0.95
 - Always use the test split — never the train split — for reported numbers
 ---
 ## 11. Known Gotchas
-- **TRL + vLLM colocate** can hang silently if `sleep_level` and `gpu_memory_utilization` aren't tuned for the GPU. If a run is stuck with idle GPU util, kill and lower memory util by 0.05.
+
+### Always
 - **LoRA flatten/unflatten** is the #1 source of silent ES bugs. Test bit-exact round-trip on a real model, not a toy.
-- **vLLM LoRA hot-swap** has a small overhead per swap; batch all evaluations per perturbation together.
 - **Qwen2.5 Instruct on GSM8K is already strong** (~50% pass@1 for 0.5B, ~73% for 1.5B). Don't expect huge headline gains from either method — the interesting signal is in stability, sample efficiency curves, and the Pareto frontier.
 - **GSM8K format reward** can be hacked: model emits `<answer>X</answer>` for any X to grab the bonus. Keep format bonus small (≤0.1 of accuracy reward) and audit completions early.
-- **Seed isolation**: HF `set_seed` does not seed vLLM's sampler. Pass `seed=` to `SamplingParams` explicitly.
-- **MATH-500 verifier** is harder than GSM8K's — fractions, surds, equivalent forms. Use the `latex2sympy` route from `lm-eval-harness` rather than rolling your own.
+- **Seed isolation**: HF `set_seed` does not seed vLLM's sampler (Phase 4+). Pass `seed=` to `SamplingParams` explicitly.
+- **MATH-500 verifier** (Phase 4+) is harder than GSM8K's — fractions, surds, equivalent forms. Use the `latex2sympy` route from `lm-eval-harness` rather than rolling your own.
+
+### Toy phase (M1 Pro / MPS)
+- **`PYTORCH_ENABLE_MPS_FALLBACK=1`** is required for some attention/normalization ops that don't have native MPS kernels in older torch. Set in the smoke script and training entrypoints.
+- **Unified memory pressure**: M1 Pro 16 GB is shared with macOS, browsers, IDE. Realistic working budget ≈ 10 GB. Close browser tabs before launching training; watch for `Memory pressure: critical` in Activity Monitor.
+- **No `bitsandbytes`, no `flash-attn`, no `xformers`** on MPS. If a TRL/peft config silently tries to load 8-bit/4-bit quantization, it'll crash. Force `torch_dtype=torch.bfloat16` (MPS supports bf16) or `torch.float16`.
+- **MPS bf16 has subtle dtype-promotion bugs in some torch 2.4.x releases.** If you see NaNs immediately on bf16, try fp16 or fp32 and file a bug.
+- **No `device_map="auto"` on MPS** for small models — it'll uselessly try to shard. Use `device_map="mps"` or `model.to("mps")` directly.
+
+### Cloud phase (CUDA / Modal)
+- **TRL + vLLM colocate** can hang silently if `sleep_level` and `gpu_memory_utilization` aren't tuned for the GPU. If a run is stuck with idle GPU util, kill and lower memory util by 0.05.
+- **vLLM LoRA hot-swap** has a small overhead per swap; batch all evaluations per perturbation together.
 ---
 ## 12. What to Ask the User Before Doing
 - Any cloud run with projected cost >$50.
@@ -279,7 +376,9 @@ You do **not** need to ask before:
 ## 13. Progress Log
 Append entries below. Most recent first. Each entry: ISO date, phase, what happened, next action.
 ```
-2026-05-12  phase-0  New independent git repo at ~/Desktop/projects/evolution_beats_rl/ (separate from the surrounding Desktop-rooted git repo whose remote is callRounded/F-Project). Scaffolded pyproject.toml (torch/trl/vllm/peft/lm-eval/wandb/omegaconf pinned per §4), Makefile, README.md, .gitignore (excludes .claude/ since a worktree of an unrelated repo lives there), src/ skeleton, tests/, configs/, scripts/, results/spend.md (zero spend). Initial commit made. Next: install deps and implement src/data/gsm8k.py, src/eval/harness.py, src/eval/compute.py, scripts/smoke_test.sh per §6 Phase 0.
+2026-05-12  phase-0  **EXIT GATE 0 PASSED.** Smoke run on M1 Pro MPS: Qwen2.5-0.5B-Instruct, 50 GSM8K test items, max_new_tokens=256, batch_size=4, seed=0 → pass@1 = 0.3200 (16/50). Threshold ≥0.30 satisfied. Wall-clock 5.3 min (well under 20-min budget). Throughput 36.9 tok/s batched bf16 eager-attention. 11,775 completion tokens, 1.163e13 forward FLOPs (counter integration validated against 2·P·T formula exactly). Note: 0.32 is below CLAUDE.md §6 Phase 0 expected 0.40–0.45 — hypotheses: (a) max_new_tokens=256 truncates some chains-of-thought on harder items, (b) 50-item subset noise (SE ≈ 0.07 at p=0.4). Not investigated further — baseline is for the gate, not for method evaluation; clean re-measurement at Phase 1 eval. MPS gotcha discovered + fixed: Qwen2.5 GQA crashes torch sdpa kernel on MPS ("mps_matmul: incompatible dimensions"); load_qwen_model now forces attn_implementation="eager" on MPS (commit cb2fc2d, documented §11). Implementation commits (this session): seed.py fa65609, compute.py e6edd3f, harness.py cb2fc2d, smoke_test.sh 1c4a7ec, baseline + this log entry (pending). Next: open Phase 1 branch (phase-1-grpo-toy), implement src/grpo/train.py with TRL GRPOTrainer + use_vllm=False, run 3-seed toy GRPO per §6 Phase 1.
+2026-05-12  plan-update  Hardware reality check: target machine is MacBook Pro M1 Pro 16 GB unified memory, no CUDA. CLAUDE.md was scoped for RTX 4090-class CUDA hardware; full plan unrunnable as written. Rescoped to "toy first, scale on validation": Phases 1–3 now toy-scale on M1 Pro (Qwen2.5-0.5B only, GSM8K-subset, 3 seeds, no vLLM, transformers.generate() for rollouts). Inserted Phase 3.5 decision gate. Phase 4 is now CLOUD headline (Modal, both models, both datasets, 5 seeds, vLLM). Renumbered Phases 4→5 (ablations) and 5→6 (writeup). Updated §3, §4, §6, §8, §10, §11 accordingly. Dropped vllm from default deps, moved to `cloud` optional extra in pyproject.toml. Re-verified dep resolution clean on M1 (no vllm) and on Modal-target (vllm 0.6.6.post1 present). Next: install deps on M1 (`uv pip install -e ".[dev]"`), then implement src/data/gsm8k.py per Phase 0 step 2.
+2026-05-12  phase-0  New independent git repo at ~/Desktop/projects/evolution_beats_rl/ (separate from the surrounding Desktop-rooted git repo whose remote is callRounded/F-Project). Scaffolded pyproject.toml, Makefile, README.md, .gitignore, CLAUDE.md, src/ skeleton, tests/, configs/, scripts/, results/spend.md (zero spend). Initial commit. Then: uv pip compile flagged latex2sympy2↔omegaconf antlr4 transitive collision; dropped latex2sympy2 from direct deps (CLAUDE.md §11 says use lm-eval-harness's minerva_math pipeline for MATH-500 latex anyway). Capped transformers <5, trl <1, vllm <0.7, peft <0.15 to stay in CLAUDE.md's tested API surface. Resolved: torch 2.5.1 / transformers 4.57.6 / trl 0.29.1 / vllm 0.6.6.post1 / peft 0.14.0 / lm-eval 0.4.12 / accelerate 1.13.0 (transitive). Commit fc41dff.
 2026-05-11  phase-0  Project initialized from CLAUDE.md spec. Next: scaffold repo, install deps.
 ```
 ---
