@@ -35,7 +35,7 @@ grpo:
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
   num_generations: 4
-  max_completion_length: 256
+  max_completion_length: 512
   beta: 0.04
   epsilon: 0.2
   loss_type: grpo
@@ -52,7 +52,7 @@ reward:
 eval:
   every_steps: 10          # evals at 0 / 10 / 20 inside a 20-step run
   batch_size: 4
-  max_new_tokens: 256
+  max_new_tokens: 512
   save_checkpoint: true
   eval_at_start: true
 
