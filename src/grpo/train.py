@@ -223,6 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         mode=str(cfg.run.wandb_mode),
         config={**resolved, "git_sha": git_sha, "seed": int(cfg.run.seed)},
     )
+    # Our callbacks log flops/* and eval/* against trainer global_step, which
+    # lags wandb's internal step counter (HF WandbCallback advances it many
+    # times per optimizer step) — without this, those logs are silently dropped.
+    wandb.define_metric("train/global_step")
+    wandb.define_metric("flops/*", step_metric="train/global_step")
+    wandb.define_metric("eval/*", step_metric="train/global_step")
 
     print(f"Loading {cfg.model.name}...")
     model, tokenizer = load_qwen_model(str(cfg.model.name), device=device)

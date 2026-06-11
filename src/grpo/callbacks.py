@@ -97,14 +97,19 @@ class FLOPAccountingCallback(TrainerCallback):
             self.budget.add_reference_forward(params=self.params, n_tokens=delta)
 
         if wandb.run is not None:
+            # No step= kwarg: HF's WandbCallback advances wandb's internal step
+            # many times per optimizer step, so explicit step=global_step gets
+            # dropped by wandb's monotonicity rule. We embed train/global_step
+            # as a field instead; train.py registers it via define_metric as
+            # the x-axis for flops/* and eval/*.
             wandb.log(
                 {
                     "flops/total": self.budget.total_flops,
                     "flops/forward": self.budget.forward_flops,
                     "flops/backward": self.budget.backward_flops,
                     "flops/generated_tokens": self.budget.generated_tokens,
-                },
-                step=state.global_step,
+                    "train/global_step": state.global_step,
+                }
             )
 
         if state.global_step % self.write_every_steps == 0:
@@ -241,7 +246,8 @@ class PeriodicEvalCallback(TrainerCallback):
         }
         self.history.append({"step": step, **record})
         if wandb.run is not None:
-            wandb.log(record, step=step)
+            # See FLOPAccountingCallback.on_log for why there's no step= kwarg.
+            wandb.log({**record, "train/global_step": step})
         if self.jsonl_callback is not None:
             self.jsonl_callback.log_extra(step, record)
 

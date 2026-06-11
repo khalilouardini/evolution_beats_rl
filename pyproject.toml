@@ -9,7 +9,9 @@ dependencies = [
     # Core ML — upper bounds keep us in the API surface CLAUDE.md was written
     # against (transformers 4.x, TRL 0.x GRPOTrainer). Relax once we verify the
     # newer majors don't break Phase 1 code.
-    "torch>=2.4,<2.6",
+    # torch >=2.6: trl 0.29 imports FSDPModule (torch.distributed.fsdp), which
+    # doesn't exist in 2.5.x — found at GRPOTrainer import time on 2.5.1.
+    "torch>=2.6,<2.9",
     "transformers>=4.45,<5",
     "datasets>=3.0,<4",
     # RL + PEFT
@@ -46,8 +48,11 @@ dev = [
 # installed on M1 Pro toy phase: vllm has no usable MPS backend, and pulling
 # it in transitively forces CUDA-bound wheels that fail to build on darwin.
 # On the GPU box, install with: uv pip install -e ".[dev,cloud]"
+# vllm >=0.7: 0.6.x requires torch 2.5.x, which trl 0.29 cannot run on
+# (FSDPModule import). Colocate-mode API facts in CLAUDE.md §11 were written
+# against 0.6.x — RE-VERIFY against the resolved vllm at Phase 4 start.
 cloud = [
-    "vllm>=0.6.3,<0.7",
+    "vllm>=0.7",
 ]
 
 [build-system]
