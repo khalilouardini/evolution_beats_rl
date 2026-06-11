@@ -1,0 +1,60 @@
+# Phase 1 GRPO smoke config — CLAUDE.md §9 fast loop:
+# Qwen2.5-0.5B, 50 train prompts, 20 steps, eval on 50 test prompts.
+# Run: make smoke-grpo  (= python -m src.grpo.train --config configs/grpo/smoke.yaml --max_steps 20 --eval_subset 50)
+
+run:
+  phase: p1smoke
+  method: grpo
+  model_tag: qwen0.5b
+  seed: 0
+  output_root: runs
+  wandb_project: es-vs-grpo
+  wandb_group: phase-1
+  wandb_tags: [grpo, qwen2.5-0.5b, gsm8k, scale=toy, smoke]
+  wandb_mode: offline
+
+model:
+  name: Qwen/Qwen2.5-0.5B-Instruct
+  dtype: bfloat16
+
+data:
+  train_n: 50              # 4 prompts/step × 20 steps = 80 draws ≈ 1.6 epochs; fine for smoke
+  eval_n: 50
+  data_seed: 0
+  max_prompt_tokens: 256
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  target_modules: all-linear
+
+grpo:
+  learning_rate: 5.0e-6
+  lr_scheduler_type: constant
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  num_generations: 4
+  max_completion_length: 256
+  beta: 0.04
+  epsilon: 0.2
+  loss_type: grpo
+  scale_rewards: group
+  temperature: 1.0
+  top_p: 1.0
+  max_steps: 20
+  logging_steps: 1
+  disable_dropout: true
+
+reward:
+  weights: [1.0, 0.1]
+
+eval:
+  every_steps: 10          # evals at 0 / 10 / 20 inside a 20-step run
+  batch_size: 4
+  max_new_tokens: 256
+  save_checkpoint: true
+  eval_at_start: true
+
+flops:
+  write_every_steps: 10

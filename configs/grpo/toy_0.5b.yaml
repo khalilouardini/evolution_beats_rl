@@ -1,0 +1,59 @@
+# Phase 1 TOY GRPO config — CLAUDE.md §10 (TOY phase) hyperparameters.
+# Canonical run: python -m src.grpo.train --config configs/grpo/toy_0.5b.yaml --seed {0,1,2}
+
+run:
+  phase: p1
+  method: grpo
+  model_tag: qwen0.5b
+  seed: 0                  # overridden per seed run: 0, 1, 2
+  output_root: runs
+  wandb_project: es-vs-grpo
+  wandb_group: phase-1
+  wandb_tags: [grpo, qwen2.5-0.5b, gsm8k, scale=toy]
+  wandb_mode: offline      # user decision: not authenticated; `wandb sync` later
+
+model:
+  name: Qwen/Qwen2.5-0.5B-Instruct
+  dtype: bfloat16          # base weights; LoRA adapters fp32 via peft default
+
+data:
+  train_n: 500
+  eval_n: 50
+  data_seed: 0             # FIXED across run seeds — identical subset for all 3 seeds
+  max_prompt_tokens: 256   # assert-only guard (TRL 0.29.1 has no max_prompt_length)
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  target_modules: all-linear
+
+grpo:                      # mapped 1:1 onto GRPOConfig in build_grpo_config
+  learning_rate: 5.0e-6
+  lr_scheduler_type: constant  # deviation from HF default (linear): fairness vs ES constant-LR Adam
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4   # → generation_batch_size 16, divisible by num_generations
+  num_generations: 4
+  max_completion_length: 256
+  beta: 0.04               # TRL 0.29.1 default is 0.0 — must be explicit
+  epsilon: 0.2
+  loss_type: grpo          # TRL 0.29.1 default is "dapo" — must be explicit
+  scale_rewards: group     # original GRPO group-std normalization
+  temperature: 1.0
+  top_p: 1.0
+  max_steps: 100
+  logging_steps: 1         # every optimizer step → exact FLOP/metric mirroring
+  disable_dropout: true
+
+reward:
+  weights: [1.0, 0.1]      # accuracy, format — order matches reward_funcs list
+
+eval:
+  every_steps: 25
+  batch_size: 4
+  max_new_tokens: 256
+  save_checkpoint: true
+  eval_at_start: true
+
+flops:
+  write_every_steps: 10
