@@ -95,7 +95,8 @@ def test_build_grpo_config_toy_values(tmp_path):
     assert gc.beta == 0.04
 
     assert gc.num_generations == 4
-    assert gc.max_completion_length == 256
+    # 512 since the 2026-06-11 plan-update (256 truncated ~50% of rollouts).
+    assert gc.max_completion_length == 512
     assert gc.epsilon == 0.2
     assert gc.scale_rewards == "group"
     assert gc.reward_weights == [1.0, 0.1]
