@@ -18,7 +18,7 @@ model:
 
 data:
   train_n: 500
-  eval_n: 50
+  eval_n: 100
   data_seed: 0             # FIXED across run seeds — identical subset for all 3 seeds
   max_prompt_tokens: 256   # assert-only guard (TRL 0.29.1 has no max_prompt_length)
 
@@ -29,7 +29,7 @@ lora:
   target_modules: all-linear
 
 grpo:                      # mapped 1:1 onto GRPOConfig in build_grpo_config
-  learning_rate: 5.0e-6
+  learning_rate: 2.0e-5
   lr_scheduler_type: constant  # deviation from HF default (linear): fairness vs ES constant-LR Adam
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4   # → generation_batch_size 16, divisible by num_generations

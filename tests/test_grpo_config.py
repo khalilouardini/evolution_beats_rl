@@ -100,7 +100,9 @@ def test_build_grpo_config_toy_values(tmp_path):
     assert gc.scale_rewards == "group"
     assert gc.reward_weights == [1.0, 0.1]
     assert gc.temperature == 1.0
-    assert gc.learning_rate == 5e-6
+    # 2e-5 = LoRA-appropriate LR; the original 5e-6 (full-param-inherited)
+    # moved the policy only ~0.01 nats in 100 steps — see Progress Log 2026-06-12.
+    assert gc.learning_rate == 2e-5
     assert gc.per_device_train_batch_size == 4
     assert gc.gradient_accumulation_steps == 4
     assert gc.max_steps == 100
